@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import { WANTED_LEAGUES } from '@/lib/leagues';
 import { Fixture } from '@/lib/types';
+import { getRedisClient } from '@/lib/redis-client';
 
 function mapMatchToFixture(match: any): Fixture {
   const utcDate = match.utcDate;
@@ -122,6 +123,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
   }
 
+  // Try cache if REDIS_URL is set
+  const redisClient = getRedisClient();
+  if (redisClient) {
+    try {
+      const cached = await redisClient.get('live');
+      if (cached) {
+        return NextResponse.json(JSON.parse(cached));
+      }
+    } catch (err) {
+      console.error('Redis get error (live):', err);
+    }
+  }
+
   try {
     const leagueIds = WANTED_LEAGUES.map(l => l.id).join(',');
     const apiUrl = 'https://api.football-data.org/v4/matches';
@@ -134,7 +148,19 @@ export async function GET(request: NextRequest) {
       timeout: 8000,
     });
     const matches = response.data.matches || [];
+    // Sort by timestamp ascending (earliest live first)
+    matches.sort((a: any, b: any) => new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime());
     const fixtures: Fixture[] = matches.map(mapMatchToFixture);
+
+    // Cache for 60 seconds if Redis available
+    if (redisClient) {
+      try {
+        await redisClient.setEx('live', 60, JSON.stringify({ fixtures }));
+      } catch (err) {
+        console.error('Redis set error (live):', err);
+      }
+    }
+
     return NextResponse.json({ fixtures });
   } catch (error: any) {
     console.error('API error:', error.message);

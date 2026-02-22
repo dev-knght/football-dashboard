@@ -90,7 +90,8 @@ function getMockFixtures(date: string): Fixture[] {
     });
   });
 
-  return fixtures;
+  // Sort by timestamp ascending
+  return fixtures.sort((a, b) => a.timestamp - b.timestamp);
 }
 
 function getLongStatus(short: string): string {
