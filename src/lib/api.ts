@@ -7,9 +7,7 @@ import { WANTED_LEAGUES } from './leagues';
  */
 export async function getFixtures(date: string): Promise<Fixture[]> {
   try {
-    const res = await fetch(`/api/fixtures?date=${encodeURIComponent(date)}`, {
-      next: { revalidate: 60 }, // cache for 60s
-    });
+    const res = await fetch(`/api/fixtures?date=${encodeURIComponent(date)}`);
     if (!res.ok) {
       throw new Error(`API error: ${res.status}`);
     }
@@ -21,14 +19,9 @@ export async function getFixtures(date: string): Promise<Fixture[]> {
   }
 }
 
-/**
- * Fetch live fixtures via our server-side API route.
- */
 export async function getLiveFixtures(): Promise<Fixture[]> {
   try {
-    const res = await fetch('/api/live', {
-      next: { revalidate: 30 },
-    });
+    const res = await fetch('/api/live/');
     if (!res.ok) {
       throw new Error(`API error: ${res.status}`);
     }
