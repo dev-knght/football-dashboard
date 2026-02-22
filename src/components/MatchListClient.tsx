@@ -1,38 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Fixture } from '@/lib/types';
 import MatchCard from './MatchCard';
 import DateNav from './DateNav';
 
 interface MatchListClientProps {
-  initialFixtures: Fixture[];
-  currentDate: string; // YYYY-MM-DD (the date used for API call)
+  fixtures: Fixture[];
+  currentDate: string; // YYYY-MM-DD
+  isLoading?: boolean;
+  onNavigate: (date: string) => void;
 }
 
-export default function MatchListClient({ initialFixtures, currentDate }: MatchListClientProps) {
-  const router = useRouter();
-  const [fixtures, setFixtures] = useState<Fixture[]>(initialFixtures);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Optional: poll live fixtures if today is selected and we have API key
-  useEffect(() => {
-    const isToday = new Date().toISOString().split('T')[0] === currentDate;
-    if (!isToday) return;
-    // Poll every 60 seconds for live updates? But we'd need to fetch again for the same date.
-    // We can implement live refresh later.
-    // For now, static.
-  }, [currentDate]);
-
+export default function MatchListClient({ fixtures, currentDate, isLoading = false, onNavigate }: MatchListClientProps) {
   const ammanTimeZone = 'Asia/Amman';
 
-  // Group fixtures by league? Or just grid.
   return (
     <>
-      <DateNav currentDate={currentDate} />
+      <DateNav currentDate={currentDate} onNavigate={onNavigate} />
       {isLoading ? (
-        <div className="text-center py-10">Loading...</div>
+        <div className="text-center py-10">Loading…</div>
       ) : fixtures.length === 0 ? (
         <div className="text-center py-10 text-gray-500">No matches found for this date.</div>
       ) : (

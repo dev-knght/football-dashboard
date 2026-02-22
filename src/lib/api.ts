@@ -2,13 +2,146 @@ import axios from 'axios';
 import { Fixture } from './types';
 import { WANTED_LEAGUES } from './leagues';
 
-const API_BASE = 'https://v3.api-football.com';
-const API_KEY = process.env.NEXT_PUBLIC_API_FOOTBALL_KEY;
+const API_BASE = 'https://api.football-data.org/v4';
+const API_KEY = process.env.NEXT_PUBLIC_FOOTBALL_DATA_KEY;
 
 const api = axios.create({
   baseURL: API_BASE,
-  headers: API_KEY ? { 'x-apisports-key': API_KEY } : {},
+  headers: API_KEY ? { 'X-Auth-Token': API_KEY } : {},
+  timeout: 8000, // 8-second timeout to avoid hanging
 });
+
+/**
+ * Map a football-data.org match object to our Fixture shape.
+ */
+function mapMatchToFixture(match: any): Fixture {
+  const utcDate = match.utcDate;
+  const dateObj = new Date(utcDate);
+  const timestamp = Math.floor(dateObj.getTime() / 1000);
+  const areaName = match.area?.name || '';
+
+  // Determine status.short and status.long
+  let statusShort = 'NS';
+  let statusLong = 'Not Started';
+  const rawStatus = match.status;
+  const minute = match.minute;
+
+  switch (rawStatus) {
+    case 'SCHEDULED':
+      statusShort = 'NS';
+      statusLong = 'Not Started';
+      break;
+    case 'IN_PLAY':
+      if (minute != null) {
+        if (minute < 45) {
+          statusShort = '1H';
+          statusLong = 'First Half';
+        } else if (minute < 90) {
+          statusShort = '2H';
+          statusLong = 'Second Half';
+        } else {
+          statusShort = 'ET';
+          statusLong = 'Extra Time';
+        }
+      } else {
+        statusShort = '1H';
+        statusLong = 'First Half';
+      }
+      break;
+    case 'PAUSED':
+      statusShort = 'HT';
+      statusLong = 'Halftime';
+      break;
+    case 'FINISHED':
+      statusShort = 'FT';
+      statusLong = 'Finished';
+      break;
+    case 'POSTPONED':
+      statusShort = 'PST';
+      statusLong = 'Postponed';
+      break;
+    case 'CANCELLED':
+      statusShort = 'CAN';
+      statusLong = 'Cancelled';
+      break;
+    default:
+      statusShort = rawStatus ? rawStatus.substring(0, 2).toUpperCase() : 'UN';
+      statusLong = rawStatus || 'Unknown';
+  }
+
+  // Goals from fullTime (current score)
+  let goals: { home: number | null; away: number | null } | undefined;
+  if (match.score?.fullTime) {
+    goals = {
+      home: match.score.fullTime.home ?? null,
+      away: match.score.fullTime.away ?? null,
+    };
+  }
+
+  // Referee from referees array
+  let referee: string | undefined;
+  if (Array.isArray(match.referees)) {
+    const mainRef = match.referees.find((r: any) => r.type === 'REFEREE');
+    if (mainRef) referee = mainRef.name;
+  }
+
+  // Venue (optional)
+  let venue: { id: number; name: string; city: string } | undefined;
+  if (match.venue) {
+    venue = {
+      id: match.venue.id,
+      name: match.venue.name,
+      city: match.venue.city || '',
+    };
+  }
+
+  // League with season year
+  const competition = match.competition || {};
+  const season = match.season || {};
+  let seasonYear = new Date().getFullYear();
+  if (season.startDate) {
+    const parts = season.startDate.split('-');
+    if (parts[0]) seasonYear = parseInt(parts[0], 10);
+  }
+
+  const league = {
+    id: competition.id,
+    name: competition.name,
+    country: areaName,
+    logo: competition.emblem || '',
+    season: seasonYear,
+  };
+
+  // Teams
+  const homeTeam = {
+    id: match.homeTeam.id,
+    name: match.homeTeam.name,
+    logo: match.homeTeam.crest || '',
+    country: areaName,
+  };
+  const awayTeam = {
+    id: match.awayTeam.id,
+    name: match.awayTeam.name,
+    logo: match.awayTeam.crest || '',
+    country: areaName,
+  };
+
+  return {
+    id: match.id,
+    referee,
+    timezone: 'UTC',
+    date: utcDate,
+    timestamp,
+    status: { short: statusShort, long: statusLong },
+    minute: match.minute,
+    elapsed: match.minute,
+    venue,
+    homeTeam,
+    awayTeam,
+    goals,
+    league,
+  };
+}
 
 /**
  * Fetch fixtures for a specific date (YYYY-MM-DD).
@@ -16,31 +149,28 @@ const api = axios.create({
  */
 export async function getFixtures(date: string): Promise<Fixture[]> {
   if (!API_KEY) {
-    console.warn('NEXT_PUBLIC_API_FOOTBALL_KEY not set, using mock fixtures');
+    console.warn('NEXT_PUBLIC_FOOTBALL_DATA_KEY not set, using mock fixtures');
     return getMockFixtures(date);
   }
 
   try {
-    // Build comma-separated league IDs string
     const leagueIds = WANTED_LEAGUES.map(l => l.id).join(',');
-    const response = await api.get('/fixtures', {
+    const response = await api.get('/matches', {
       params: {
         date,
-        league: leagueIds,
-        season: new Date().getFullYear(), // current season; might need adjustment for leagues running across years
+        competitions: leagueIds,
       },
     });
-    // API returns { response: [...] }
-    return response.data.response as Fixture[];
+    const matches = response.data.matches || [];
+    return matches.map(mapMatchToFixture);
   } catch (error: any) {
     console.error('API fetch error:', error.message);
-    // Fallback to mock data on any error (rate limit, server error, etc.)
     return getMockFixtures(date);
   }
 }
 
 /**
- * Fetch live fixtures (currently in-play, halftime, etc.)
+ * Fetch live fixtures (currently in-play or paused).
  */
 export async function getLiveFixtures(): Promise<Fixture[]> {
   if (!API_KEY) {
@@ -48,22 +178,27 @@ export async function getLiveFixtures(): Promise<Fixture[]> {
   }
   try {
     const leagueIds = WANTED_LEAGUES.map(l => l.id).join(',');
-    const response = await api.get('/fixtures/live', {
+    const response = await api.get('/matches', {
       params: {
-        league: leagueIds,
-        season: new Date().getFullYear(),
+        status: 'IN_PLAY,PAUSED',
+        competitions: leagueIds,
       },
     });
-    return response.data.response as Fixture[];
+    const matches = response.data.matches || [];
+    return matches.map(mapMatchToFixture);
   } catch (error: any) {
     console.error('Live fixtures error:', error.message);
     return [];
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                 Mock data                                   */
+/* -------------------------------------------------------------------------- */
+
 /**
  * Mock fixtures for development/demo without API key.
- * Provides a few sample matches across wanted leagues for the given date.
+ * Uses WANTED_LEAGUES IDs (football-data.org) and placeholder team logos.
  */
 function getMockFixtures(date: string): Fixture[] {
   // Generate deterministic mock data based on date string
@@ -104,13 +239,16 @@ function getMockFixtures(date: string): Fixture[] {
       else statusShort = 'NS';
     }
 
+    const statusLong = getLongStatus(statusShort);
+    const timestamp = Math.floor(fixtureDate.getTime() / 1000);
+
     fixtures.push({
       id: seed + idx,
       referee: undefined,
       timezone: 'UTC',
       date: fixtureDate.toISOString(),
-      timestamp: fixtureDate.getTime() / 1000,
-      status: { short: statusShort, long: getLongStatus(statusShort) },
+      timestamp,
+      status: { short: statusShort, long: statusLong },
       minute,
       elapsed: minute,
       homeTeam: { ...home, id: 0, country: '' },
