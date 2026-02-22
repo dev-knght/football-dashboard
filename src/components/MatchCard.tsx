@@ -65,8 +65,8 @@ export default function MatchCard({ fixture, ammanTimeZone }: MatchCardProps) {
             )}
           </div>
         </div>
-        <div className="w-12 text-center font-mono text-lg">
-          {goals ? `${goals.home} - ${goals.away}` : '-'}
+        <div className="w-12 text-center font-mono text-lg font-bold tabular-nums">
+          {goals && (goals.home != null && goals.away != null) ? `${goals.home} – ${goals.away}` : '–'}
         </div>
         <div className="flex-1 text-left">
           <div className="flex items-center justify-start gap-2">
